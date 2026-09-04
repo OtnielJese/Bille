@@ -19,6 +19,9 @@ import type {
   Transaction,
 } from "@/types";
 
+// Evita que Next.js cachee esta página: siempre consulta datos frescos.
+export const dynamic = "force-dynamic";
+
 export default function DashboardPage() {
   const today = format(new Date(), "EEEE d 'de' MMMM 'de' yyyy", {
     locale: es,

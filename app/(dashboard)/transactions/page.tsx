@@ -138,6 +138,7 @@ function TransactionsContent() {
     if (res.ok) {
       toast.success("Transacción eliminada");
       load();
+      router.refresh();
     } else {
       const data = await res.json().catch(() => null);
       toast.error(data?.error ?? "No se pudo eliminar la transacción");

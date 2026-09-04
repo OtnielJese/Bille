@@ -207,29 +207,21 @@ export async function POST(request: NextRequest) {
     const pct = total > 0 ? Math.round((spent / total) * 100) : 0;
 
     const catList = (categories ?? [])
-      .map((c: any) => `- ${c.name} (${c.type}) id:${c.id} icono:${c.icon}`)
+      .map((c: any) => `${c.name}=${c.id}`)
       .join("\n");
 
-    const systemPrompt = `Eres Bille, el asistente financiero personal de ${profile?.name ?? "usuario"}. Eres un especialista EXCLUSIVO en las finanzas personales del usuario: gastos, ingresos, ahorros, presupuesto, categorías y análisis de sus movimientos.
-Solo hablas sobre las finanzas del usuario. Si te preguntan algo que no tenga relación con sus finanzas (clima, deportes, recetas, programación, política, etc.), responde de forma breve y amable que solo puedes ayudar con sus finanzas personales y ofrece ejemplos de lo que sí puedes hacer (registrar un gasto, leer un comprobante, analizar su presupuesto, resumir sus gastos, etc.).
+    const systemPrompt = `Eres Bille, asistente financiero personal de ${profile?.name ?? "usuario"} (solo finanzas personales).
+Presupuesto: ${formatCurrency(total)} · Gastado: ${formatCurrency(spent)} · Ingresos: ${formatCurrency(income)} · Restante: ${formatCurrency(remaining)}.
 
-CONTEXTO FINANCIERO ACTUAL:
-- Presupuesto mensual: ${formatCurrency(total)}
-- Gastado este mes: ${formatCurrency(spent)} (${pct}% del presupuesto)
-- Ingresos este mes: ${formatCurrency(income)}
-- Restante: ${formatCurrency(remaining)}
-- Categorías disponibles (usa el id exacto de esta lista):
+Categorías (usa el id exacto):
 ${catList}
 
-INSTRUCCIONES:
-Si el usuario menciona un gasto, compra, pago o sube un comprobante, extrae los datos y responde ÚNICAMENTE con este JSON (sin texto adicional ni markdown):
-{"action":"add_transaction","type":"egreso","category_id":"<id de la lista>","category_name":"<nombre>","amount":0.00,"detail":"descripción","payment_method":"Efectivo","bank":"","date":"YYYY-MM-DD","message":"✓ Registré S/ X.XX en Categoría — detalle"}
-
 Reglas:
-- "amount" es un número (no string). Si hay imagen, lee el monto del comprobante.
-- "date" en formato YYYY-MM-DD. Si no se especifica, usa la fecha de hoy.
-- "payment_method" debe ser uno de: Efectivo, Débito, Crédito, Transferencia, Yape/Plin, Otro.
-- Si el usuario pide un análisis, reporte o hace una pregunta sobre sus finanzas, responde en texto amigable en español peruano. Sé conciso, usa emojis con moderación. Si detectas que el presupuesto está muy usado (más del 80%), adviértelo.`;
+- Si el usuario menciona un gasto/pago/ingreso o sube un comprobante, responde SOLO con este JSON (sin markdown ni texto extra):
+{"action":"add_transaction","type":"egreso","category_id":"<id>","amount":0.00,"detail":"descripción","payment_method":"Efectivo","date":"YYYY-MM-DD","message":"✓ Registré S/ X.XX — detalle"}
+- type: "egreso" o "ingreso". amount: número sin símbolo. date: si no la dice, usa hoy.
+- payment_method: Efectivo, Débito, Crédito, Transferencia, Yape/Plin u Otro.
+- Para preguntas o análisis, responde en texto breve y amigable en español peruano.`;
 
     const encoder = new TextEncoder();
 
@@ -372,7 +364,12 @@ Reglas:
             )
           );
 
-          // El envío de alerta no bloquea la respuesta ya emitida
+          // Cerrar el stream ANTES de enviar la alerta: la respuesta al
+          // usuario no debe esperar al email (que puede fallar o tardar).
+          controller.close();
+
+          // El envío de alerta se hace en segundo plano y NUNCA bloquea
+          // la respuesta ya emitida.
           if (willAlert) {
             try {
               await sendBudgetAlert(alertTo, {
@@ -404,7 +401,6 @@ Reglas:
             }
           }
 
-          controller.close();
           return;
         }
 
