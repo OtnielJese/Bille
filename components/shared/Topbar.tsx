@@ -11,7 +11,6 @@ import {
   Search,
   Settings,
   Sparkles,
-  Upload,
   User,
   X,
 } from "lucide-react";
@@ -29,6 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ThemeToggle } from "@/components/shared/ThemeToggle";
+import { UploadReceiptButton } from "@/components/shared/UploadReceiptButton";
 import { useSidebar } from "@/components/shared/Sidebar";
 import { toast } from "sonner";
 
@@ -123,12 +123,7 @@ export function Topbar({ user }: { user: Profile | null }) {
         {/* Acciones contextuales */}
         {pathname === "/" && (
           <>
-            <Button variant="outline" size="sm" className="hidden sm:inline-flex" asChild>
-              <Link href="/chat">
-                <Upload className="mr-1.5 h-4 w-4" />
-                Subir comprobante
-              </Link>
-            </Button>
+            <UploadReceiptButton className="hidden sm:inline-flex" />
             <Button size="sm" asChild>
               <Link href="/transactions?new=1">
                 <Plus className="mr-1.5 h-4 w-4" />

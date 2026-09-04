@@ -5,6 +5,7 @@ import { ChevronDown, History } from "lucide-react";
 import type { ChatMessage as ChatMessageType } from "@/types";
 import { ChatMessage } from "@/components/chat/ChatMessage";
 import { ChatComposer } from "@/components/chat/ChatComposer";
+import { consumePendingReceipt } from "@/components/shared/UploadReceiptButton";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -118,6 +119,9 @@ export function ChatInterface({
     if (cached) {
       setMessages(cached);
     }
+    // Si el usuario llegó desde "Subir comprobante", cargar esa imagen.
+    const pending = consumePendingReceipt();
+    if (pending) setImage(pending);
     setHydrated(true);
   }, [storageKey]);
 

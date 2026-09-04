@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { ArrowUp, ChevronDown, Mic, Plus } from "lucide-react";
+import { ArrowUp, Mic, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ImageUpload } from "@/components/chat/ImageUpload";
 
@@ -85,24 +85,13 @@ export function ChatComposer({
           onKeyDown={handleKeyDown}
           placeholder={
             mode === "centered"
-              ? "Pregunta a Bille Pro"
+              ? "Pregunta a Bille"
               : "Escribe un mensaje o pregunta aquí..."
           }
           rows={1}
           className="max-h-40 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-muted-foreground"
           disabled={disabled}
         />
-
-        {/* Selector de modelo */}
-        <button
-          type="button"
-          className="hidden h-9 shrink-0 items-center gap-1.5 rounded-xl px-2.5 text-xs font-semibold text-foreground transition-colors hover:bg-muted sm:flex"
-          title="Modelo de IA"
-        >
-          <span className="h-2 w-2 rounded-full bg-[#0d9488]" />
-          Pro
-          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-        </button>
 
         {showSend ? (
           <button
