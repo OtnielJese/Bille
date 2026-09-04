@@ -92,9 +92,13 @@ function extractJson(text: string): any | null {
  * en la fecha que el modelo devuelve; solo en lo que el usuario escribió.
  * Si no hay fecha explícita, se usa hoy.
  */
-function resolveTransactionDate(message: string): string {
+function resolveTransactionDate(message: string, localDate?: string | null): string {
   const m = (message ?? "").toLowerCase().trim();
-  const today = todayLocal();
+  // Usa la fecha local del usuario si viene del cliente; si no, la del servidor.
+  const today =
+    localDate && /^\d{4}-\d{2}-\d{2}$/.test(localDate)
+      ? localDate
+      : todayLocal();
   if (!m) return today;
 
   // YYYY-MM-DD o YYYY/MM/DD
@@ -162,9 +166,10 @@ export async function POST(request: NextRequest) {
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
 
   try {
-    const { message, imageBase64 } = await request.json().catch(() => ({
+    const { message, imageBase64, localDate } = await request.json().catch(() => ({
       message: "",
       imageBase64: null,
+      localDate: null,
     }));
 
     if (!message?.trim() && !imageBase64) {
@@ -320,7 +325,7 @@ Reglas:
               payment_method: validPayment,
               owner: json.owner ?? "",
               ai_extracted: true,
-              date: resolveTransactionDate(message ?? ""),
+              date: resolveTransactionDate(message ?? "", localDate),
             })
             .select("*, category:categories(*)")
             .single();

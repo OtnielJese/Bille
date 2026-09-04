@@ -172,6 +172,14 @@ export function ChatInterface({
           body: JSON.stringify({
             message: text,
             imageBase64: imageUrl,
+            // Envía la fecha local del usuario (el servidor corre en UTC).
+            localDate: (() => {
+              const n = new Date();
+              const y = n.getFullYear();
+              const m = String(n.getMonth() + 1).padStart(2, "0");
+              const d = String(n.getDate()).padStart(2, "0");
+              return `${y}-${m}-${d}`;
+            })(),
           }),
         });
 
