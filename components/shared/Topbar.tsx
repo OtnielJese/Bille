@@ -10,7 +10,6 @@ import {
   Plus,
   Search,
   Settings,
-  Sparkles,
   User,
   X,
 } from "lucide-react";
@@ -101,25 +100,6 @@ export function Topbar({ user }: { user: Profile | null }) {
       </form>
 
       <div className="ml-auto flex items-center gap-2">
-        {/* Botón prominente Chat IA */}
-        <Button
-          asChild
-          size="sm"
-          className="relative h-10 gap-2 rounded-2xl bg-[#0d9488] px-4 font-bold shadow-violet-soft transition-all hover:-translate-y-0.5 hover:bg-[#0f766e] hover:shadow-violet-high"
-        >
-          <Link href="/chat">
-            <span className="absolute -right-1 -top-1 flex h-3 w-3">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500" />
-            </span>
-            <Sparkles className="h-4 w-4 animate-pulse" />
-            <span className="hidden sm:inline">Chat IA</span>
-            <span className="hidden rounded-full bg-white/20 px-2 py-0.5 text-[11px] font-bold md:inline">
-              Voz / Foto
-            </span>
-          </Link>
-        </Button>
-
         {/* Acciones contextuales */}
         {pathname === "/" && (
           <>
