@@ -236,14 +236,29 @@ Reglas:
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         let fullText = "";
+        let started = false;
+        let isJson = false;
+        let didStream = false;
 
         try {
           fullText = await streamGemini(
             systemPrompt,
             message ?? "",
             imageBase64,
-            () => {
-              /* se acumula todo y se decide al final */
+            (token) => {
+              // Detecta en el primer token si la respuesta es JSON (transacción)
+              // o texto libre. El texto libre se muestra en vivo (streaming).
+              if (!started) {
+                const first = token.trimStart().charAt(0);
+                if (first) {
+                  started = true;
+                  isJson = first === "{";
+                }
+              }
+              if (!isJson) {
+                didStream = true;
+                controller.enqueue(encoder.encode(token));
+              }
             }
           );
         } catch (err: any) {
@@ -393,7 +408,9 @@ Reglas:
           return;
         }
 
-        if (fullText.trim()) {
+        // Si no fue JSON, ya se transmitió en vivo (streaming).
+        // Solo enviamos el texto completo si nunca se transmitió nada.
+        if (!didStream && fullText.trim()) {
           controller.enqueue(encoder.encode(fullText.trim()));
         }
         controller.close();
