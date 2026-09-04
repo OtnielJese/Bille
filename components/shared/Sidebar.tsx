@@ -12,7 +12,6 @@ import {
   Wallet,
   Plug,
   X,
-  Sparkles,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -153,12 +152,6 @@ function NavSection({
                   )}
                 />
                 {item.label}
-                {item.aiHighlight && (
-                  <span className="ml-auto flex items-center gap-1 rounded-md bg-[#0d9488] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
-                    <Sparkles className="h-3 w-3" />
-                    Auto
-                  </span>
-                )}
               </Link>
             </li>
           );
