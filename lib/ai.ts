@@ -14,6 +14,9 @@ export async function generateText(
   const model = genAI.getGenerativeModel({
     model: process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite",
     systemInstruction,
+    generationConfig: {
+      temperature: 0,
+    },
   });
 
   const result = await model.generateContent(text);

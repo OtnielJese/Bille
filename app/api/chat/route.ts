@@ -35,6 +35,9 @@ async function streamGemini(
   const model = genAI.getGenerativeModel({
     model: process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite",
     systemInstruction: systemPrompt,
+    generationConfig: {
+      temperature: 0,
+    },
   });
 
   const result = await model.generateContentStream({
@@ -221,6 +224,7 @@ Reglas:
 {"action":"add_transaction","type":"egreso","category_id":"<id>","amount":0.00,"detail":"descripción","payment_method":"Efectivo","date":"YYYY-MM-DD","message":"✓ Registré S/ X.XX — detalle"}
 - type: "egreso" o "ingreso". amount: número sin símbolo. date: si no la dice, usa hoy.
 - payment_method: Efectivo, Débito, Crédito, Transferencia, Yape/Plin u Otro.
+- NUNCA preguntes: elige tú la categoría más parecida y responde el JSON directo.
 - Para preguntas o análisis, responde en texto breve y amigable en español peruano.`;
 
     const encoder = new TextEncoder();
