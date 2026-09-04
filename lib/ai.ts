@@ -16,7 +16,8 @@ export async function generateText(
     systemInstruction,
     generationConfig: {
       temperature: 0,
-    },
+      thinkingConfig: { thinkingBudget: 128 },
+    } as any,
   });
 
   const result = await model.generateContent(text);

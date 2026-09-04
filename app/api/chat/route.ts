@@ -37,7 +37,8 @@ async function streamGemini(
     systemInstruction: systemPrompt,
     generationConfig: {
       temperature: 0,
-    },
+      thinkingConfig: { thinkingBudget: 128 },
+    } as any,
   });
 
   const result = await model.generateContentStream({
