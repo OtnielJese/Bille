@@ -2,66 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient, getUserFast } from "@/lib/supabase/server";
 import { getCurrentMonthYear } from "@/lib/utils";
+import { loadFinancialSummary } from "@/lib/financial-summary";
 
 const budgetSchema = z.object({
-  total: z.number().min(0),
-  savings_goal: z.number().min(0).optional(),
+  total: z.number().finite().min(0).max(9999999999.99).multipleOf(0.01),
+  savings_goal: z.number().finite().min(0).max(9999999999.99).multipleOf(0.01).optional(),
   alert_email: z.string().email().optional().nullable(),
-  alert_threshold_pct: z.number().min(1).max(100).optional(),
-  month: z.number().min(1).max(12).optional(),
-  year: z.number().optional(),
+  alert_threshold_pct: z.number().int().min(1).max(100).optional(),
+  month: z.number().int().min(1).max(12).optional(),
+  year: z.number().int().min(2000).max(2100).optional(),
 });
-
-async function computeMonth(
-  supabase: any,
-  userId: string,
-  month: number,
-  year: number
-) {
-  const start = `${year}-${String(month).padStart(2, "0")}-01`;
-  const endDate = new Date(year, month, 0);
-  const end = `${year}-${String(month).padStart(2, "0")}-${String(
-    endDate.getDate()
-  ).padStart(2, "0")}`;
-
-  const { data: budget } = await supabase
-    .from("budgets")
-    .select("*")
-    .eq("user_id", userId)
-    .eq("month", month)
-    .eq("year", year)
-    .maybeSingle();
-
-  const { data: txs } = await supabase
-    .from("transactions")
-    .select("type, amount")
-    .eq("user_id", userId)
-    .gte("date", start)
-    .lte("date", end);
-
-  let spent = 0;
-  let income = 0;
-  let savings = 0;
-  for (const t of txs ?? []) {
-    const amt = Number(t.amount);
-    if (t.type === "egreso") spent += amt;
-    else if (t.type === "ingreso") income += amt;
-    else if (t.type === "ahorro") savings += amt;
-  }
-
-  const total = Number(budget?.total ?? 0);
-  const remaining = total - spent;
-  const pctUsed = total > 0 ? Math.round((spent / total) * 100) : 0;
-
-  return {
-    budget,
-    spent,
-    income,
-    savings,
-    remaining,
-    pct_used: pctUsed,
-  };
-}
 
 export async function GET(request: NextRequest) {
   const supabase = createClient();
@@ -72,53 +22,38 @@ export async function GET(request: NextRequest) {
   const history = sp.get("history") === "true";
 
   if (history) {
-    const { data: budgets } = await supabase
+    const { data: budgets, error } = await supabase
       .from("budgets")
       .select("*")
       .eq("user_id", user.id)
       .order("year", { ascending: false })
-      .order("month", { ascending: false });
+      .order("month", { ascending: false })
+      .limit(12);
+    if (error) return NextResponse.json({ error: "No se pudo cargar el historial." }, { status: 500 });
 
-    // gastado de los últimos 12 meses
-    const start = `${new Date().getFullYear() - 1}-01-01`;
-    const { data: txs } = await supabase
-      .from("transactions")
-      .select("type, amount, date")
-      .eq("user_id", user.id)
-      .gte("date", start);
-
-    const spentByMonth: Record<string, number> = {};
-    for (const t of txs ?? []) {
-      if (t.type !== "egreso") continue;
-      const key = t.date.slice(0, 7); // YYYY-MM
-      spentByMonth[key] = (spentByMonth[key] ?? 0) + Number(t.amount);
+    const result = [];
+    for (const budget of budgets ?? []) {
+      const summary = await loadFinancialSummary(supabase, user.id, budget.month, budget.year);
+      result.push({ ...budget, total: summary.total_budget, spent: summary.spent, pct_used: summary.pct_used });
     }
-
-    const result = (budgets ?? []).map((b: any) => {
-      const spent = spentByMonth[`${b.year}-${String(b.month).padStart(2, "0")}`] ?? 0;
-      const total = Number(b.total);
-      return {
-        ...b,
-        spent,
-        pct_used: total > 0 ? Math.round((spent / total) * 100) : 0,
-      };
-    });
 
     return NextResponse.json({ budgets: result });
   }
 
   const { month, year } = getCurrentMonthYear();
-  const queryMonth = parseInt(sp.get("month") ?? String(month), 10);
-  const queryYear = parseInt(sp.get("year") ?? String(year), 10);
+  const queryMonth = Number(sp.get("month") ?? month);
+  const queryYear = Number(sp.get("year") ?? year);
+  if (!Number.isInteger(queryMonth) || queryMonth < 1 || queryMonth > 12 || !Number.isInteger(queryYear) || queryYear < 2000 || queryYear > 2100) return NextResponse.json({ error: "Período inválido" }, { status: 400 });
 
-  const summary = await computeMonth(
+  const summary = await loadFinancialSummary(
     supabase,
     user.id,
     Number.isNaN(queryMonth) ? month : queryMonth,
     Number.isNaN(queryYear) ? year : queryYear
   );
 
-  return NextResponse.json(summary);
+  const { transactions, ...publicSummary } = summary;
+  return NextResponse.json(publicSummary);
 }
 
 export async function POST(request: NextRequest) {

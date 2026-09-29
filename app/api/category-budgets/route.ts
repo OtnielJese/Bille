@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, getUserFast } from "@/lib/supabase/server";
 import { getCurrentMonthYear } from "@/lib/utils";
@@ -9,8 +10,9 @@ export async function GET(request: NextRequest) {
 
   const sp = request.nextUrl.searchParams;
   const { month, year } = getCurrentMonthYear();
-  const m = parseInt(sp.get("month") ?? String(month), 10);
-  const y = parseInt(sp.get("year") ?? String(year), 10);
+  const m = Number(sp.get("month") ?? month);
+  const y = Number(sp.get("year") ?? year);
+  if (!Number.isInteger(m) || m < 1 || m > 12 || !Number.isInteger(y) || y < 2000 || y > 2100) return NextResponse.json({ error: "Período inválido" }, { status: 400 });
 
   const start = `${y}-${String(m).padStart(2, "0")}-01`;
   const endDate = new Date(y, m, 0);
@@ -65,14 +67,13 @@ export async function PUT(request: NextRequest) {
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
 
   const body = await request.json().catch(() => null);
-  const { category_id, amount, month, year } = body ?? {};
-  if (!category_id || amount === undefined) {
-    return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
-  }
-
+  const parsed = z.object({ category_id: z.string().uuid(), amount: z.number().finite().min(0).max(9999999999.99).multipleOf(0.01), month: z.number().int().min(1).max(12).optional(), year: z.number().int().min(2000).max(2100).optional() }).safeParse(body);
+  if (!parsed.success) return NextResponse.json({ error: 'Datos inválidos' }, { status: 400 });
+  const { category_id, amount, month, year } = parsed.data;
+  const { data: category, error: categoryError } = await supabase.from('categories').select('id').eq('id', category_id).eq('user_id', user.id).maybeSingle();
+  if (categoryError || !category) return NextResponse.json({ error: 'Categoría no disponible' }, { status: 400 });
   const { month: defMonth, year: defYear } = getCurrentMonthYear();
-  const m = month ?? defMonth;
-  const y = year ?? defYear;
+  const m = month ?? defMonth, y = year ?? defYear;
 
   const { data, error } = await supabase
     .from("category_budgets")

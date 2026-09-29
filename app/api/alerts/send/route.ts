@@ -3,6 +3,8 @@ import { z } from "zod";
 import { createClient, getUserFast } from "@/lib/supabase/server";
 import { sendBudgetAlert } from "@/lib/resend";
 import { getCurrentMonthYear } from "@/lib/utils";
+import { loadFinancialSummary } from "@/lib/financial-summary";
+import { monthRange } from "@/lib/finance";
 
 const alertSchema = z.object({
   type: z.enum(["test", "budget_low"]),
@@ -50,7 +52,8 @@ export async function POST(request: NextRequest) {
     .select("amount, category:categories(name, icon)")
     .eq("user_id", user.id)
     .eq("type", "egreso")
-    .gte("date", start);
+    .gte("date", start)
+    .lte("date", monthRange().end);
 
   const grouped = new Map<string, { name: string; icon: string; amount: number }>();
   for (const t of txs ?? []) {
@@ -65,12 +68,9 @@ export async function POST(request: NextRequest) {
     .sort((a, b) => b.amount - a.amount)
     .slice(0, 3);
 
-  const budgetRemaining = isTest
-    ? (parsed.data.budget_remaining ?? Number(budget?.total ?? 0))
-    : (parsed.data.budget_remaining ?? 0);
-  const budgetPctLeft = isTest
-    ? (parsed.data.budget_pct_left ?? 100)
-    : (parsed.data.budget_pct_left ?? 0);
+  const summary = await loadFinancialSummary(supabase, user.id, month, year);
+  const budgetRemaining = summary.budget_remaining ?? 0;
+  const budgetPctLeft = summary.total_budget > 0 ? Math.round(budgetRemaining / summary.total_budget * 100) : 0;
 
   try {
     await sendBudgetAlert(to, {
@@ -78,6 +78,8 @@ export async function POST(request: NextRequest) {
       subject: isTest
         ? "🔔 Alerta de prueba — Bille"
         : "⚠️ Tu presupuesto está bajo — Bille",
+      heading: isTest ? "Alerta de prueba" : "Tu presupuesto está bajo",
+      description: isTest ? "este correo confirma que puedes recibir las alertas de Bille." : undefined,
       budgetRemaining,
       budgetPctLeft,
       topCategories,

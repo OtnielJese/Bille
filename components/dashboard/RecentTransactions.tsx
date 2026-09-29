@@ -13,8 +13,10 @@ import {
 
 export function RecentTransactions({
   transactions,
+  month,
 }: {
   transactions: Transaction[];
+  month?: string;
 }) {
   return (
     <div className="space-y-2">
@@ -79,7 +81,7 @@ export function RecentTransactions({
       </Table>
 
       <Link
-        href="/transactions"
+        href={month ? `/transactions?month=${month}` : "/transactions"}
         className="flex items-center justify-end gap-1 px-2 py-1 text-sm font-medium text-primary transition-colors hover:text-primary/80"
       >
         Ver todas

@@ -147,6 +147,7 @@ export function TransactionForm({
       toast.success(
         isEditing ? "Transacción actualizada" : "Transacción registrada"
       );
+      window.dispatchEvent(new Event("finance-updated"));
       onOpenChange(false);
       onSaved();
     } catch (error: any) {

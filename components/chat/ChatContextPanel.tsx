@@ -1,7 +1,7 @@
 import Link from "next/link";
+import { loadFinancialSummary } from "@/lib/financial-summary";
 import { ArrowUpRight, Pencil } from "lucide-react";
 import { createClient, getCurrentUser } from "@/lib/supabase/server";
-import { startOfMonth, endOfMonth, format } from "date-fns";
 import { formatCurrency, getCurrentMonthYear } from "@/lib/utils";
 
 export async function ChatContextPanel() {
@@ -9,43 +9,21 @@ export async function ChatContextPanel() {
   const user = await getCurrentUser();
   if (!user) return null;
 
-  const now = new Date();
   const { month, year } = getCurrentMonthYear();
-  const start = format(startOfMonth(now), "yyyy-MM-dd");
-  const end = format(endOfMonth(now), "yyyy-MM-dd");
-
-  const [{ data: budget }, { data: txs }] = await Promise.all([
-    supabase
-      .from("budgets")
-      .select("total")
-      .eq("user_id", user.id)
-      .eq("month", month)
-      .eq("year", year)
-      .maybeSingle(),
-    supabase
-      .from("transactions")
-      .select("type, amount, category:categories(*)")
-      .eq("user_id", user.id)
-      .gte("date", start)
-      .lte("date", end),
-  ]);
-
-  let spent = 0;
-  let income = 0;
+  const summary = await loadFinancialSummary(supabase, user.id, month, year);
+  const txs = summary.transactions;
+  const { spent, income } = summary;
   const byCategory = new Map<string, number>();
 
   for (const t of txs ?? []) {
     const amount = Number(t.amount);
     if (t.type === "egreso") {
-      spent += amount;
       const name = (t as any).category?.name ?? "Otros";
       byCategory.set(name, (byCategory.get(name) ?? 0) + amount);
-    } else if (t.type === "ingreso") {
-      income += amount;
     }
   }
 
-  const total = Number(budget?.total ?? 0);
+  const total = summary.total_budget;
   const topCategory = Array.from(byCategory.entries()).sort(
     (a, b) => b[1] - a[1]
   )[0];
@@ -79,7 +57,7 @@ export async function ChatContextPanel() {
             <p className="mt-1 text-lg font-bold text-foreground">
               {formatCurrency(spent)}{" "}
               <span className="text-sm font-medium text-muted-foreground">
-                / {formatCurrency(total)}
+                / {total > 0 ? formatCurrency(total) : "sin presupuesto"}
               </span>
             </p>
             <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-muted">

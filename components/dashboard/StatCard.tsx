@@ -9,7 +9,10 @@ interface StatCardProps {
   change?: number | null;
   positiveIsGood?: boolean;
   spark?: number[];
-  footer?: string;
+  footer?: React.ReactNode;
+  sparkColor?: string;
+  sparkLabel?: string;
+  negative?: boolean;
   icon?: LucideIcon;
 }
 
@@ -21,6 +24,9 @@ export function StatCard({
   positiveIsGood = true,
   spark,
   footer,
+  sparkColor = "#0d9488",
+  sparkLabel,
+  negative = false,
   icon: Icon = Wallet,
 }: StatCardProps) {
   const showChange = typeof change === "number" && !Number.isNaN(change);
@@ -45,11 +51,11 @@ export function StatCard({
         </span>
       </div>
 
-      <p className="mt-2 text-2xl font-bold tracking-tight text-foreground">
+      <p className={cn("mt-2 text-2xl font-bold tabular-nums tracking-tight", negative ? "text-rose-600 dark:text-rose-400" : "text-foreground")}>
         {value}
       </p>
 
-      <div className="mt-3">
+      <div className="mt-3 min-h-5">
         {showChange ? (
           <span
             className={cn(
@@ -65,7 +71,7 @@ export function StatCard({
               <ArrowDownRight className="h-3.5 w-3.5" />
             )}
             {Math.abs(change!).toFixed(1)}%
-            <span className="font-normal opacity-70">vs mes anterior</span>
+            <span className="font-normal opacity-70">vs mismo período anterior</span>
           </span>
         ) : (
           <span className="text-xs text-muted-foreground">
@@ -76,14 +82,16 @@ export function StatCard({
 
       {sparkPath && (
         <svg
-          className="absolute bottom-4 right-4 h-12 w-24 opacity-70"
+          className="mt-3 h-10 w-full opacity-80"
+          role="img"
+          aria-label={sparkLabel ?? `${title}: movimientos diarios hasta hoy`}
           viewBox="0 0 100 40"
           fill="none"
           preserveAspectRatio="none"
         >
           <path
             d={sparkPath}
-            stroke="rgba(124,58,237,0.55)"
+            stroke={sparkColor}
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -95,7 +103,7 @@ export function StatCard({
 }
 
 function buildSpark(data?: number[]): string {
-  if (!data || data.length < 2) return "";
+  if (!data || data.length < 2 || data.every(value => value === 0)) return "";
   const min = Math.min(...data);
   const max = Math.max(...data);
   const range = max - min || 1;

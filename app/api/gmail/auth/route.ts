@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getUserFast } from "@/lib/supabase/server";
 import { getGmailAuthUrl } from "@/lib/gmail";
@@ -10,5 +11,8 @@ export async function GET() {
     return NextResponse.redirect(new URL("/login", appUrl));
   }
 
-  return NextResponse.redirect(getGmailAuthUrl());
+  const state = randomBytes(32).toString('hex');
+  const response = NextResponse.redirect(getGmailAuthUrl(state));
+  response.cookies.set('gmail_oauth_state', user.id + ':' + state, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/api/gmail', maxAge: 600 });
+  return response;
 }

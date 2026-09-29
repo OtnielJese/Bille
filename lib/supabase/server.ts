@@ -34,24 +34,10 @@ export function createClient() {
   );
 }
 
-/**
- * Obtiene el usuario autenticado leyendo la sesión de las cookies,
- * sin hacer una petición de red a Supabase Auth (más rápido que getUser()).
- * Solo refresca el token si ya expiró.
- */
+/** Valida la identidad con Supabase Auth antes de operar sobre datos privados. */
 export async function getUserFast() {
-  const supabase = createClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  if (!session) return null;
-  if (session.expires_at && session.expires_at * 1000 < Date.now()) {
-    const {
-      data: { session: refreshed },
-    } = await supabase.auth.refreshSession();
-    return refreshed?.user ?? null;
-  }
-  return session.user;
+  const { data: { user }, error } = await createClient().auth.getUser();
+  return error ? null : user;
 }
 
 export const getCurrentUser = cache(getUserFast);

@@ -32,7 +32,8 @@ import { useSidebar } from "@/components/shared/Sidebar";
 import { toast } from "sonner";
 
 const pageTitles: Record<string, string> = {
-  "/": "Dashboard",
+  "/": "Panel Principal",
+  "/integrations": "Integraciones",
   "/chat": "Chat IA",
   "/transactions": "Transacciones",
   "/budget": "Presupuesto",

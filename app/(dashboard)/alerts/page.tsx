@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/table";
 import { formatCurrency, formatDatetime } from "@/lib/utils";
 import { toast } from "sonner";
+import { Switch } from "@/components/ui/switch";
 
 export default function AlertsPage() {
   const [email, setEmail] = useState<string | null>(null);
@@ -29,6 +30,7 @@ export default function AlertsPage() {
   const [history, setHistory] = useState<AlertHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [enabled, setEnabled] = useState(true);
   const [spendLimit, setSpendLimit] = useState(100);
   const [period, setPeriod] = useState("diaria");
   const [savingLimit, setSavingLimit] = useState(false);
@@ -59,6 +61,7 @@ export default function AlertsPage() {
       setHistory((historyRes.data as AlertHistory[]) ?? []);
 
       const settings = await settingsRes.json();
+      setEnabled(settings.settings?.enabled !== false);
       setSpendLimit(Number(settings.settings?.spend_limit ?? 100));
       setPeriod(settings.settings?.period ?? "diaria");
     } catch {
@@ -81,6 +84,7 @@ export default function AlertsPage() {
         body: JSON.stringify({
           spend_limit: spendLimit,
           period,
+          enabled,
         }),
       });
       const data = await res.json();
@@ -137,7 +141,7 @@ export default function AlertsPage() {
                   <CheckCircle2 className="h-6 w-6 shrink-0 text-emerald-600" />
                   <div>
                     <p className="font-semibold text-emerald-700 dark:text-emerald-400">
-                      Alertas activas
+                      {enabled ? "Alertas activas" : "Alertas pausadas"}
                     </p>
                     <p className="text-sm text-muted-foreground">
                       Enviaremos alertas a <strong>{email}</strong> cuando te quede
@@ -185,6 +189,7 @@ export default function AlertsPage() {
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <p>1. Configura tu presupuesto mensual y un email de alertas.</p>
             <p>2. Define un umbral de alerta (por defecto 20%).</p>
+            <p>Los avisos se evalúan al guardar gastos o sincronizar Gmail manualmente. El presupuesto se avisa como máximo una vez al día y el límite de gasto una vez por período.</p>
             <p>
               3. Cuando tu presupuesto restante caiga por debajo del umbral,
               Bille te enviará un correo con el detalle.
@@ -210,6 +215,11 @@ export default function AlertsPage() {
             Te avisamos cuando superes este monto de gastos en el período
             elegido: diario, semanal, quincenal o mensual.
           </p>
+          <div className="flex items-center gap-3">
+            <Switch id="alerts-enabled" checked={enabled} onCheckedChange={setEnabled} />
+            <Label htmlFor="alerts-enabled">Activar avisos por correo</Label>
+          </div>
+          <p className="text-xs text-muted-foreground">La semana empieza el lunes. Las quincenas van del 1 al 15 y del 16 al fin de mes. Guarda los cambios para aplicarlos.</p>
           <div className="flex flex-wrap items-end gap-2">
             <div className="space-y-1.5">
               <Label className="text-xs">Monto máximo (S/)</Label>

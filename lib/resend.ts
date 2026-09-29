@@ -6,23 +6,30 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 export interface BudgetAlertData {
   name?: string;
   subject: string;
+  heading?: string;
+  description?: string;
+  periodLabel?: string;
   budgetRemaining: number;
   budgetPctLeft: number;
   topCategories: { name: string; icon: string; amount: number }[];
 }
 
-export async function sendBudgetAlert(to: string, data: BudgetAlertData) {
+export async function sendBudgetAlert(to: string, data: BudgetAlertData, idempotencyKey?: string) {
   const { data: result, error } = await resend.emails.send({
     from: "Bille <onboarding@resend.dev>",
     to: [to],
     subject: data.subject,
     html: buildEmailHtml(data),
-  });
+  }, idempotencyKey ? { idempotencyKey } : undefined);
 
   if (error) {
     throw new Error(error.message);
   }
   return result;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 }
 
 function buildEmailHtml(data: BudgetAlertData): string {
@@ -37,7 +44,7 @@ function buildEmailHtml(data: BudgetAlertData): string {
     .map(
       (c) => `
       <tr>
-        <td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;">${c.icon} ${c.name}</td>
+        <td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;">${escapeHtml(c.icon)} ${escapeHtml(c.name)}</td>
         <td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:600;">${formatPEN(c.amount)}</td>
       </tr>`
     )
@@ -48,7 +55,7 @@ function buildEmailHtml(data: BudgetAlertData): string {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${data.subject}</title>
+  <title>${escapeHtml(data.subject)}</title>
 </head>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:24px 0;">
@@ -69,18 +76,18 @@ function buildEmailHtml(data: BudgetAlertData): string {
           <tr>
             <td style="padding:32px;">
               <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:16px 20px;margin-bottom:24px;">
-                <p style="margin:0;color:#c2410c;font-size:16px;font-weight:700;">⚠️ Tu presupuesto está bajo</p>
-                <p style="margin:6px 0 0;color:#9a3412;font-size:14px;">Hola ${data.name || ""}, te queda poco margen del presupuesto de este mes.</p>
+                <p style="margin:0;color:#c2410c;font-size:16px;font-weight:700;">${escapeHtml(data.heading ?? "Tu presupuesto está bajo")}</p>
+                <p style="margin:6px 0 0;color:#9a3412;font-size:14px;">Hola ${escapeHtml(data.name || "")}, ${escapeHtml(data.description ?? "te queda poco margen del presupuesto de este mes.")}</p>
               </div>
 
-              <p style="font-size:14px;color:#475569;margin:0 0 8px;">Presupuesto restante</p>
+              <p style="font-size:14px;color:#475569;margin:0 0 8px;">Disponible del ${escapeHtml(data.periodLabel ?? "presupuesto mensual")}</p>
               <p style="font-size:32px;font-weight:800;color:#0f1b35;margin:0 0 16px;">${remaining}</p>
 
               <!-- Barra SVG -->
               <svg width="100%" height="16" style="display:block;border-radius:999px;background:#e2e8f0;margin-bottom:24px;">
                 <rect width="${pct}%" height="16" rx="8" fill="${barColor}" />
               </svg>
-              <p style="font-size:13px;color:#64748b;margin:0 0 28px;">${pct}% del presupuesto disponible</p>
+              <p style="font-size:13px;color:#64748b;margin:0 0 28px;">${pct}% del ${escapeHtml(data.periodLabel ?? "presupuesto mensual")} disponible</p>
 
               <p style="font-size:14px;font-weight:700;color:#0f1b35;margin:0 0 8px;">Top categorías de gasto</p>
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-bottom:28px;">

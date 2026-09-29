@@ -17,8 +17,9 @@ const BANK_SENDERS = [
   "bn.com.pe",
 ];
 
-export function getGmailAuthUrl(): string {
+export function getGmailAuthUrl(state: string): string {
   const params = new URLSearchParams({
+    state,
     client_id: process.env.GOOGLE_CLIENT_ID!,
     redirect_uri: process.env.GOOGLE_REDIRECT_URI!,
     response_type: "code",
@@ -94,11 +95,12 @@ export async function getAccountEmail(accessToken: string): Promise<string> {
 
 export async function listAccounts(userId: string) {
   const supabase = createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("gmail_accounts")
     .select("*")
     .eq("user_id", userId)
     .order("created_at", { ascending: true });
+  if (error) throw error;
   return (data as any[]) ?? [];
 }
 
@@ -117,7 +119,7 @@ export async function saveAccount(
       user_id: userId,
       email: account.email,
       access_token: account.accessToken,
-      refresh_token: account.refreshToken ?? null,
+      ...(account.refreshToken ? { refresh_token: account.refreshToken } : {}),
       expiry: account.expiry ?? null,
       updated_at: new Date().toISOString(),
     },
@@ -138,11 +140,12 @@ export async function deleteAccount(userId: string, accountId: string) {
 
 export async function markSynced(userId: string, accountId: string) {
   const supabase = createClient();
-  await supabase
+  const { error } = await supabase
     .from("gmail_accounts")
     .update({ last_synced_at: new Date().toISOString() })
     .eq("id", accountId)
     .eq("user_id", userId);
+  if (error) throw error;
 }
 
 export async function getValidAccessTokenForAccount(account: any): Promise<string> {
@@ -170,19 +173,19 @@ export function bankQuery(): string {
   return `from:(${BANK_SENDERS.join(" OR ")})`;
 }
 
-export async function listBankMessages(
-  accessToken: string,
-  query: string,
-  maxResults = 20
-) {
-  const q = `${query} newer_than:7d`;
-  const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}&q=${encodeURIComponent(q)}`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) throw new Error(`Gmail: error ${res.status} al listar correos`);
-  const data = await res.json();
-  return (data.messages ?? []) as { id: string }[];
+export async function listBankMessages(accessToken: string, query: string, days = 7) {
+  const messages: { id: string }[] = [];
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({ maxResults: String(Math.min(50, 100 - messages.length)), q: query + ' newer_than:' + days + 'd' });
+    if (pageToken) params.set('pageToken', pageToken);
+    const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?' + params, { headers: { Authorization: 'Bearer ' + accessToken } });
+    if (!res.ok) throw new Error('No se pudieron leer los correos. Comprueba la conexión de Gmail.');
+    const data = await res.json();
+    messages.push(...(data.messages ?? []));
+    pageToken = data.nextPageToken;
+  } while (pageToken && messages.length < 100);
+  return { messages, truncated: Boolean(pageToken) };
 }
 
 export async function getMessage(accessToken: string, id: string) {

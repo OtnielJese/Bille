@@ -1,6 +1,9 @@
 "use client";
 
+import { readableAssistantHistory, visibleChatStreamText } from "@/lib/chat-response";
+
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ChevronDown, History } from "lucide-react";
 import type { ChatMessage as ChatMessageType } from "@/types";
 import { ChatMessage } from "@/components/chat/ChatMessage";
@@ -69,6 +72,7 @@ export function ChatInterface({
 }) {
   const storageKey = `bille_chat_${userId}`;
 
+  const router = useRouter();
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
   const [input, setInput] = useState("");
   const [image, setImage] = useState<string | null>(null);
@@ -220,7 +224,7 @@ export function ChatInterface({
           full += decoder.decode(value, { stream: true });
 
           const markerIdx = full.indexOf(MARKER);
-          const textPart = markerIdx === -1 ? full : full.slice(0, markerIdx);
+          const textPart = visibleChatStreamText(full);
           let tx: ChatMessageType["transaction"];
           if (markerIdx !== -1) {
             tx = parseTransaction(full.slice(markerIdx + MARKER.length));
@@ -245,6 +249,8 @@ export function ChatInterface({
 
         if (transaction) {
           toast.success("Transacción registrada");
+          router.refresh();
+          window.dispatchEvent(new Event("finance-updated"));
         }
       } catch (error: any) {
         setMessages((prev) =>
@@ -262,7 +268,7 @@ export function ChatInterface({
         setLoading(false);
       }
     },
-    [loading, saveHistoryMessage, loadHistory]
+    [loading, saveHistoryMessage, loadHistory, router]
   );
 
   function startNewChat() {
@@ -353,7 +359,7 @@ export function ChatInterface({
                   {h.role === "user" ? "Tú:" : "IA:"}
                 </span>
                 <span className="line-clamp-2 flex-1 text-muted-foreground">
-                  {h.content}
+                  {h.role === "assistant" ? readableAssistantHistory(h.content) : h.content}
                 </span>
               </li>
             ))}

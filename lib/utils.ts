@@ -2,6 +2,7 @@ import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+import { peruToday, monthRange } from "@/lib/finance";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -18,7 +19,7 @@ export function formatCurrency(amount: number): string {
 
 export function formatDate(date: string): string {
   try {
-    return format(new Date(date), "dd MMM yyyy", { locale: es });
+    return format(new Date(date.length === 10 ? date + "T12:00:00" : date), "dd MMM yyyy", { locale: es });
   } catch {
     return date;
   }
@@ -54,17 +55,13 @@ export function getMonthName(month: number): string {
 }
 
 export function getCurrentMonthYear(): { month: number; year: number } {
-  const now = new Date();
-  return { month: now.getMonth() + 1, year: now.getFullYear() };
+  const { month, year } = monthRange();
+  return { month, year };
 }
 
 /** Fecha local del día en formato YYYY-MM-DD (evita el desfase de UTC). */
 export function todayLocal(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  return peruToday();
 }
 
 /** Convierte una fecha Date a string local YYYY-MM-DD. */

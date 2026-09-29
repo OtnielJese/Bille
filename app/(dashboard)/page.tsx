@@ -1,4 +1,8 @@
 import { Suspense } from "react";
+import { loadFinancialSummary } from "@/lib/financial-summary";
+import { peruToday, sumMoney } from "@/lib/finance";
+import { getMonthView, type MonthView } from "@/lib/month-filter";
+import { DashboardMonthFilter } from "@/components/dashboard/DashboardMonthFilter";
 import Link from "next/link";
 import { createClient, getCurrentUser } from "@/lib/supabase/server";
 import { startOfMonth, endOfMonth, subMonths, format } from "date-fns";
@@ -10,49 +14,53 @@ import { StatCard } from "@/components/dashboard/StatCard";
 import { IncomeExpenseChart } from "@/components/dashboard/IncomeExpenseChart";
 import { CategoryBreakdown } from "@/components/dashboard/CategoryBreakdown";
 import { RecentTransactions } from "@/components/dashboard/RecentTransactions";
-import { formatCurrency, getCurrentMonthYear } from "@/lib/utils";
+import { formatCurrency } from "@/lib/utils";
 import { SyncEmailButton } from "@/components/dashboard/SyncEmailButton";
 import type {
   CategoryStat,
   ChartDataPoint,
-  DashboardStats,
   Transaction,
 } from "@/types";
 
 // Evita que Next.js cachee esta página: siempre consulta datos frescos.
 export const dynamic = "force-dynamic";
 
-export default function DashboardPage() {
-  const today = format(new Date(), "EEEE d 'de' MMMM 'de' yyyy", {
+export default function DashboardPage({ searchParams }: { searchParams?: { month?: string | string[] } }) {
+  const view = getMonthView(searchParams?.month);
+  const today = format(new Date(peruToday() + "T12:00:00"), "EEEE d 'de' MMMM 'de' yyyy", {
     locale: es,
   });
   return (
     <div className="space-y-6">
-      <div>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
         <h1 className="text-2xl font-bold tracking-tight">Panel Principal</h1>
-        <p className="text-sm capitalize text-muted-foreground">{today}</p>
+        <p className="text-sm first-letter:uppercase text-muted-foreground">{today}</p>
+        <p className="mt-1 text-sm font-medium capitalize">{view.label}</p>
+        </div>
+        <DashboardMonthFilter value={view.value} currentMonth={peruToday().slice(0, 7)} />
       </div>
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Columna principal: métricas, gráfico y transacciones recientes */}
         <div className="space-y-6 lg:col-span-2">
-        <Suspense fallback={<StatsSkeleton />}>
-          <StatsCards />
+        <Suspense key={"section-1-" + view.value} fallback={<StatsSkeleton />}>
+          <StatsCards view={view} />
         </Suspense>
-        <Suspense fallback={<CardSkeleton />}>
-          <ChartSection />
+        <Suspense key={"section-2-" + view.value} fallback={<CardSkeleton />}>
+          <ChartSection view={view} />
         </Suspense>
-        <Suspense fallback={<CardSkeleton />}>
-          <RecentSection />
+        <Suspense key={"section-3-" + view.value} fallback={<CardSkeleton />}>
+          <RecentSection view={view} />
         </Suspense>
       </div>
 
       {/* Columna secundaria: categorías */}
       <div className="space-y-6">
-        <Suspense fallback={<CardSkeleton />}>
-          <BreakdownSection />
+        <Suspense key={"section-4-" + view.value} fallback={<CardSkeleton />}>
+          <BreakdownSection view={view} />
         </Suspense>
-        <Suspense fallback={<CardSkeleton />}>
-          <BudgetDetailSection />
+        <Suspense key={"section-5-" + view.value} fallback={<CardSkeleton />}>
+          <BudgetDetailSection view={view} />
         </Suspense>
       </div>
       </div>
@@ -60,136 +68,41 @@ export default function DashboardPage() {
   );
 }
 
-async function StatsCards() {
+async function StatsCards({ view }: { view: MonthView }) {
   const supabase = createClient();
   const user = await getCurrentUser();
   if (!user) return null;
-
-  const now = new Date();
-  const { month, year } = getCurrentMonthYear();
-  const start = format(startOfMonth(now), "yyyy-MM-dd");
-  const end = format(endOfMonth(now), "yyyy-MM-dd");
-  const prevStart = format(startOfMonth(subMonths(now, 1)), "yyyy-MM-dd");
-
-  const [{ data: budget }, { data: txs }, { data: catBudgets }] = await Promise.all([
-    supabase
-      .from("budgets")
-      .select("total")
-      .eq("user_id", user.id)
-      .eq("month", month)
-      .eq("year", year)
-      .maybeSingle(),
-    supabase
-      .from("transactions")
-      .select("type, amount, date")
-      .eq("user_id", user.id)
-      .gte("date", prevStart)
-      .lte("date", end),
-    supabase
-      .from("category_budgets")
-      .select("amount")
-      .eq("user_id", user.id)
-      .eq("month", month)
-      .eq("year", year),
+  const { month, year } = view;
+  const previous = new Date(view.previous + '-01T12:00:00');
+  const [summary, previousSummary] = await Promise.all([
+    loadFinancialSummary(supabase, user.id, month, year),
+    loadFinancialSummary(supabase, user.id, previous.getMonth() + 1, previous.getFullYear()),
   ]);
-
-  let spent = 0;
-  let income = 0;
-  let savings = 0;
-  let prevSpent = 0;
-  let prevIncome = 0;
-
-  for (const t of txs ?? []) {
-    const amt = Number(t.amount);
-    const inPrev = t.date < start;
-    if (t.type === "egreso") {
-      if (inPrev) prevSpent += amt;
-      else spent += amt;
-    } else if (t.type === "ingreso") {
-      if (inPrev) prevIncome += amt;
-      else income += amt;
-    } else if (t.type === "ahorro" && !inPrev) {
-      savings += amt;
-    }
-  }
-
-  const catBudgetTotal = (catBudgets ?? []).reduce(
-    (sum, b) => sum + Number(b.amount),
-    0
-  );
-  // Si hay presupuesto total configurado se usa; si no, se suma el presupuesto por categorías
-  const total =
-    Number(budget?.total ?? 0) > 0 ? Number(budget?.total) : catBudgetTotal;
-  const remaining = total - spent;
-  const pctUsed = total > 0 ? (spent / total) * 100 : 0;
-
-  const stats: DashboardStats = {
-    total_budget: total,
-    total_spent: spent,
-    total_income: income,
-    savings,
-    remaining,
-    pct_used: pctUsed,
-  };
-
-  const spentChange = prevSpent > 0 ? ((spent - prevSpent) / prevSpent) * 100 : null;
-  const incomeChange = prevIncome > 0 ? ((income - prevIncome) / prevIncome) * 100 : null;
-
-  // Series diarias para los sparklines
-  const daysInMonth = parseInt(format(endOfMonth(now), "d"), 10);
-  const spentByDay = new Array(daysInMonth).fill(0);
-  const incomeByDay = new Array(daysInMonth).fill(0);
-  for (const t of txs ?? []) {
-    if (t.date < start) continue;
-    const day = parseInt(t.date.slice(8, 10), 10);
-    if (Number.isNaN(day) || day < 1 || day > daysInMonth) continue;
-    if (t.type === "egreso") spentByDay[day - 1] += Number(t.amount);
-    else if (t.type === "ingreso") incomeByDay[day - 1] += Number(t.amount);
-  }
-
+  const comparisonEnd = view.comparisonEnd;
+  const previousTx = previousSummary.transactions.filter(t => t.date <= comparisonEnd);
+  const comparableTx = summary.transactions.filter(t => t.date <= view.currentEnd);
+  const previousTotal = (type: string) => sumMoney(previousTx.filter(t => t.type === type).map(t => t.amount));
+  const currentTotal = (type: string) => sumMoney(comparableTx.filter(t => t.type === type).map(t => t.amount));
+  const change = (type: string) => previousTotal(type) > 0 ? (currentTotal(type) - previousTotal(type)) / previousTotal(type) * 100 : null;
+  const spark = (type: string) => Array.from({ length: view.days }, (_, i) => sumMoney(summary.transactions.filter(t => t.type === type && Number(t.date.slice(8)) === i + 1).map(t => t.amount)));
+  const hasBudget = summary.total_budget > 0;
   return (
     <div className="grid gap-4 sm:grid-cols-2">
-      <StatCard
-        title="Gastado este mes"
-        value={formatCurrency(stats.total_spent)}
-        gradient="from-rose-500 to-pink-500"
-        change={spentChange}
-        positiveIsGood={false}
-        spark={spentByDay}
-        icon={TrendingDown}
-      />
-      <StatCard
-        title="Ingresos"
-        value={formatCurrency(stats.total_income)}
-        gradient="from-emerald-500 to-teal-400"
-        change={incomeChange}
-        spark={incomeByDay}
-        icon={TrendingUp}
-      />
-      <StatCard
-        title="Presupuesto"
-        value={formatCurrency(stats.total_budget)}
-        gradient="from-teal-600 to-cyan-500"
-        footer="Presupuesto mensual"
-        icon={Wallet}
-      />
-      <StatCard
-        title="Restante"
-        value={formatCurrency(stats.remaining)}
-        gradient="from-sky-500 to-cyan-400"
-        footer="Disponible para gastar"
-        icon={PiggyBank}
-      />
+      <StatCard title={view.current ? "Gastado este mes" : "Gastos del mes"} value={formatCurrency(summary.spent)} gradient="from-rose-500 to-pink-500" change={change('egreso')} positiveIsGood={false} spark={spark('egreso')} sparkColor="#f43f5e" footer={view.label} sparkLabel={`Gastos diarios de ${view.label}`} icon={TrendingDown} />
+      <StatCard title="Ingresos" value={formatCurrency(summary.income)} gradient="from-emerald-500 to-teal-400" change={change('ingreso')} spark={spark('ingreso')} sparkColor="#10b981" footer={view.label} sparkLabel={`Ingresos diarios de ${view.label}`} icon={TrendingUp} />
+      <StatCard title="Presupuesto" value={hasBudget ? formatCurrency(summary.total_budget) : 'Sin configurar'} gradient="from-teal-600 to-cyan-500" icon={Wallet}
+        footer={!view.current ? <span>{hasBudget ? `${summary.pct_used}% utilizado · ` : ""}{view.label}</span> : hasBudget ? <span>{summary.pct_used}% utilizado · <Link href="/budget" className="font-semibold text-primary underline">Ver detalle</Link></span> : <Link href="/budget" className="font-semibold text-primary underline">Configurar presupuesto →</Link>} />
+      <StatCard title="Restante" value={formatCurrency(summary.remaining)} gradient="from-sky-500 to-cyan-400" footer="Ingresos menos gastos del mes" icon={PiggyBank} negative={summary.remaining < 0} />
     </div>
   );
 }
 
-async function ChartSection() {
+async function ChartSection({ view }: { view: MonthView }) {
   const supabase = createClient();
   const user = await getCurrentUser();
   if (!user) return null;
 
-  const now = new Date();
+  const now = new Date(view.start + "T12:00:00");
   const months: { key: string; label: string }[] = [];
   for (let i = 5; i >= 0; i--) {
     const d = subMonths(now, i);
@@ -204,7 +117,8 @@ async function ChartSection() {
     .from("transactions")
     .select("type, amount, date")
     .eq("user_id", user.id)
-    .gte("date", start);
+    .gte("date", start)
+    .lte("date", view.end);
 
   const data: ChartDataPoint[] = months.map((m) => ({
     month: m.label.charAt(0).toUpperCase() + m.label.slice(1),
@@ -224,7 +138,7 @@ async function ChartSection() {
     <Card>
       <CardHeader>
         <CardTitle>Ingresos vs Egresos</CardTitle>
-        <CardDescription>Últimos 6 meses</CardDescription>
+        <CardDescription>6 meses hasta {view.label}</CardDescription>
       </CardHeader>
       <CardContent>
         <IncomeExpenseChart data={data} />
@@ -233,12 +147,12 @@ async function ChartSection() {
   );
 }
 
-async function BreakdownSection() {
+async function BreakdownSection({ view }: { view: MonthView }) {
   const supabase = createClient();
   const user = await getCurrentUser();
   if (!user) return null;
 
-  const now = new Date();
+  const now = new Date(view.start + "T12:00:00");
   const start = format(startOfMonth(now), "yyyy-MM-dd");
   const end = format(endOfMonth(now), "yyyy-MM-dd");
 
@@ -281,7 +195,7 @@ async function BreakdownSection() {
           <CategoryBreakdown stats={stats} />
         ) : (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            Aún no hay gastos este mes.
+            No hay gastos en {view.label}.
           </p>
         )}
         <Link
@@ -297,7 +211,7 @@ async function BreakdownSection() {
   );
 }
 
-async function RecentSection() {
+async function RecentSection({ view }: { view: MonthView }) {
   const supabase = createClient();
   const user = await getCurrentUser();
   if (!user) return null;
@@ -306,6 +220,8 @@ async function RecentSection() {
     .from("transactions")
     .select("*, category:categories(*)")
     .eq("user_id", user.id)
+    .gte("date", view.start)
+    .lte("date", view.end)
     .order("date", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(5);
@@ -317,11 +233,11 @@ async function RecentSection() {
       </CardHeader>
       <CardContent>
         {(txs?.length ?? 0) > 0 ? (
-          <RecentTransactions transactions={(txs as Transaction[]) ?? []} />
+          <RecentTransactions transactions={(txs as Transaction[]) ?? []} month={view.value} />
         ) : (
           <div className="py-8 text-center text-sm text-muted-foreground">
             <ArrowDownRight className="mx-auto mb-2 h-8 w-8 opacity-40" />
-            No tienes transacciones todavía.
+            No hay transacciones en {view.label}.
           </div>
         )}
       </CardContent>
@@ -329,13 +245,13 @@ async function RecentSection() {
   );
 }
 
-async function BudgetDetailSection() {
+async function BudgetDetailSection({ view }: { view: MonthView }) {
   const supabase = createClient();
   const user = await getCurrentUser();
   if (!user) return null;
 
-  const { month, year } = getCurrentMonthYear();
-  const now = new Date();
+  const { month, year } = view;
+  const now = new Date(view.start + "T12:00:00");
   const start = format(startOfMonth(now), "yyyy-MM-dd");
   const end = format(endOfMonth(now), "yyyy-MM-dd");
 
@@ -382,7 +298,7 @@ async function BudgetDetailSection() {
     <Card>
       <CardHeader>
         <CardTitle>Presupuesto por categoría</CardTitle>
-        <CardDescription>Detalle del mes</CardDescription>
+        <CardDescription>{view.label}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {rows.map((r) => {

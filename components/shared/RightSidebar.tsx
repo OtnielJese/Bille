@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
+import { getMonthView } from "@/lib/month-filter";
 import { Mail, Pencil, Unlink, Users } from "lucide-react";
 import { formatCurrency, getInitials } from "@/lib/utils";
 import type { Profile } from "@/types";
@@ -23,7 +25,10 @@ import { toast } from "sonner";
 type GmailAccount = { id: string; email: string; last_synced_at: string | null };
 
 export function RightSidebar({ user }: { user: Profile | null }) {
-  const [budget, setBudget] = useState<{ remaining: number; pctUsed: number } | null>(null);
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const period = getMonthView(pathname === "/" || pathname === "/transactions" ? searchParams.get("month") : undefined);
+  const [budget, setBudget] = useState<{ remaining: number | null; pctUsed: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [accounts, setAccounts] = useState<GmailAccount[]>([]);
   const [editOpen, setEditOpen] = useState(false);
@@ -43,25 +48,33 @@ export function RightSidebar({ user }: { user: Profile | null }) {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    let latestRequest = 0;
     async function loadBudget() {
+      const request = ++latestRequest;
+      setLoading(true);
       try {
-        const res = await fetch("/api/budget");
+        const res = await fetch(`/api/budget?month=${period.month}&year=${period.year}`);
         if (res.ok) {
           const data = await res.json();
-          setBudget({ remaining: data.remaining ?? 0, pctUsed: data.pct_used ?? 0 });
+          if (!active || request !== latestRequest) return;
+          setBudget({ remaining: data.budget_remaining ?? null, pctUsed: data.pct_used ?? 0 });
         }
       } catch {
         /* ignore */
       } finally {
-        setLoading(false);
+        if (active && request === latestRequest) setLoading(false);
       }
     }
     loadBudget();
     loadAccounts();
-  }, [loadAccounts]);
+    const refresh = () => { loadBudget(); loadAccounts(); };
+    window.addEventListener("finance-updated", refresh);
+    return () => { active = false; window.removeEventListener("finance-updated", refresh); };
+  }, [loadAccounts, pathname, period.month, period.year]);
 
   const pctUsed = budget?.pctUsed ?? 0;
-  const pctRemaining = Math.max(0, 100 - pctUsed);
+  const pctRemaining = budget?.remaining == null ? 0 : Math.max(0, Math.min(100, 100 - pctUsed));
   const barColor = pctUsed >= 90 ? "bg-red-500" : pctUsed >= 70 ? "bg-amber-500" : "bg-[#0d9488]";
 
   async function handleDisconnect(id: string) {
@@ -112,7 +125,8 @@ export function RightSidebar({ user }: { user: Profile | null }) {
     <aside className="hidden w-80 shrink-0 flex-col gap-6 border-l bg-muted/40 p-5 xl:flex">
       {/* Presupuesto restante */}
       <div className="rounded-2xl border bg-card p-5 shadow-violet-soft">
-        <p className="text-sm font-medium text-muted-foreground">Budget remaining</p>
+        <p className="text-sm font-medium text-muted-foreground">Disponible del presupuesto</p>
+        <p className="mt-1 text-xs capitalize text-muted-foreground">{period.label}</p>
         {loading ? (
           <div className="mt-3 space-y-2">
             <Skeleton className="h-7 w-28" />
@@ -121,13 +135,13 @@ export function RightSidebar({ user }: { user: Profile | null }) {
         ) : (
           <>
             <p className="mt-1 text-2xl font-bold tracking-tight text-foreground">
-              {formatCurrency(budget?.remaining ?? 0)}
+              {budget?.remaining == null ? "Sin configurar" : formatCurrency(budget.remaining)}
             </p>
             <Progress value={pctRemaining} className="mt-3 h-2" indicatorClassName={barColor} />
             <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-              <span>{pctRemaining}% disponible</span>
+              <span>{budget?.remaining == null ? "Define tu límite mensual" : `${pctRemaining}% disponible`}</span>
               <Link
-                href="/budget"
+                href={period.current ? "/budget" : `/?month=${period.value}`}
                 className="font-semibold text-[#0d9488] transition-colors hover:text-[#0f766e]"
               >
                 Ver

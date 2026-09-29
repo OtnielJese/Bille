@@ -1,5 +1,8 @@
 "use client";
 
+import { MonthPicker } from "@/components/shared/MonthPicker";
+import { monthFromRange } from "@/lib/month-filter";
+import { monthRange, peruToday } from "@/lib/finance";
 import { Download, Search, X } from "lucide-react";
 import type { Category } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -91,6 +94,13 @@ export function TransactionFilters({
         </div>
       </div>
 
+      <div className="rounded-xl border bg-card p-4">
+        <MonthPicker value={monthFromRange(filters.date_from, filters.date_to)} currentMonth={peruToday().slice(0, 7)} allowAll onChange={value => {
+          const range = value ? monthRange(value + "-01") : null;
+          onChange({ ...filters, date_from: range?.start ?? "", date_to: range?.end ?? "" });
+        }} />
+        <p className="mt-2 text-xs text-muted-foreground">Selecciona un mes completo o ajusta las fechas de abajo.</p>
+      </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="space-y-1.5">
           <Label className="text-xs">Categoría</Label>

@@ -1,5 +1,7 @@
 "use client";
 
+import { readableAssistantHistory } from "@/lib/chat-response";
+
 import { useRef, useState } from "react";
 import type { ChatMessage as ChatMessageType } from "@/types";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
@@ -52,7 +54,7 @@ export function ChatMessage({ message, userName }: ChatMessageProps) {
               <span className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:300ms]" />
             </span>
           ) : (
-            <p className="whitespace-pre-wrap">{message.content}</p>
+            <p className="whitespace-pre-wrap">{isUser ? message.content : readableAssistantHistory(message.content)}</p>
           )}
 
           {/* Mini card de transacción registrada */}

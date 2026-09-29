@@ -29,7 +29,7 @@ export async function PUT(request: NextRequest) {
   const period = VALID_PERIODS.includes(body?.period) ? body.period : "diaria";
   const enabled = body?.enabled !== false;
 
-  if (!spend_limit || spend_limit <= 0 || Number.isNaN(spend_limit)) {
+  if (!Number.isFinite(spend_limit) || spend_limit <= 0 || spend_limit > 9999999999.99 || Math.abs(spend_limit * 100 - Math.round(spend_limit * 100)) > 0.0001) {
     return NextResponse.json({ error: "Monto inválido" }, { status: 400 });
   }
 

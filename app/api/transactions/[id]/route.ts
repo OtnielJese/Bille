@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { evaluateAlerts } from "@/lib/alerts";
+import { isValidDate } from "@/lib/finance";
 import { createClient, getUserFast } from "@/lib/supabase/server";
 
 const updateSchema = z.object({
   type: z.enum(["ingreso", "egreso", "ahorro"]).optional(),
-  amount: z.number().positive().optional(),
+  amount: z.number().finite().positive().max(9999999999.99).multipleOf(0.01).optional(),
   category_id: z.string().uuid().nullable().optional(),
   detail: z.string().optional().nullable(),
   bank: z.string().optional().nullable(),
@@ -12,7 +14,7 @@ const updateSchema = z.object({
     .enum(["Efectivo", "Débito", "Crédito", "Transferencia", "Yape/Plin", "Otro"])
     .optional(),
   owner: z.string().optional().nullable(),
-  date: z.string().optional().nullable(),
+  date: z.string().refine(isValidDate, "Fecha inválida").optional(),
 });
 
 export async function GET(
@@ -61,6 +63,11 @@ export async function PUT(
     );
   }
 
+  if (parsed.data.category_id) {
+    const { data: category, error: categoryError } = await supabase.from("categories").select("id").eq("id", parsed.data.category_id).eq("user_id", user.id).maybeSingle();
+    if (categoryError || !category) return NextResponse.json({ error: "La categoría no está disponible." }, { status: 400 });
+  }
+
   const { data, error } = await supabase
     .from("transactions")
     .update({ ...parsed.data, updated_at: new Date().toISOString() })
@@ -75,6 +82,8 @@ export async function PUT(
       { status: error ? 500 : 404 }
     );
   }
+
+  if (data.type === "egreso") await evaluateAlerts(supabase, user.id, [data.date]);
 
   return NextResponse.json({ transaction: data });
 }

@@ -17,6 +17,8 @@ type SyncResult = {
   created: number;
   skipped: number;
   errors: number;
+  truncated?: boolean;
+  accounts?: { email: string; created: number; skipped: number; errors: number; truncated: boolean; message?: string }[];
   transactions: { type: string; amount: number; detail: string }[];
 };
 
@@ -25,8 +27,9 @@ type SyncResult = {
  * nuevos gastos/pagos detectados en los emails del banco.
  * Al terminar muestra un modal pequeño con los resultados.
  */
-export function SyncEmailButton() {
+export function SyncEmailButton({ choosePeriod = false }: { choosePeriod?: boolean }) {
   const router = useRouter();
+  const [days, setDays] = useState(7);
   const [syncing, setSyncing] = useState(false);
   const [result, setResult] = useState<SyncResult | null>(null);
   const [open, setOpen] = useState(false);
@@ -34,7 +37,7 @@ export function SyncEmailButton() {
   async function handleSync() {
     setSyncing(true);
     try {
-      const res = await fetch("/api/gmail/sync", { method: "POST" });
+      const res = await fetch("/api/gmail/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ days }) });
       const data = await res.json();
       if (!res.ok) {
         toast.error(data.error ?? "No se pudo actualizar el correo");
@@ -44,10 +47,13 @@ export function SyncEmailButton() {
         created: data.created ?? 0,
         skipped: data.skipped ?? 0,
         errors: data.errors ?? 0,
+        accounts: data.accounts ?? [],
+        truncated: data.truncated,
         transactions: data.transactions ?? [],
       });
       setOpen(true);
       router.refresh();
+      window.dispatchEvent(new Event("finance-updated"));
     } catch {
       toast.error("No se pudo actualizar el correo");
     } finally {
@@ -60,6 +66,11 @@ export function SyncEmailButton() {
 
   return (
     <>
+      {choosePeriod && <label className="flex items-center gap-3 text-sm">Período a revisar
+        <select aria-label="Período de sincronización" className="rounded-lg border bg-background p-2" value={days} disabled={syncing} onChange={e => setDays(Number(e.target.value))}>
+          <option value={7}>Últimos 7 días</option><option value={30}>Últimos 30 días</option><option value={90}>Últimos 90 días</option>
+        </select>
+      </label>}
       <button
         type="button"
         onClick={handleSync}
@@ -71,20 +82,29 @@ export function SyncEmailButton() {
         ) : (
           <RefreshCw className="h-4 w-4" />
         )}
-        {syncing ? "Actualizando correo…" : "Actualizar correo"}
+        {syncing ? "Revisando correos…" : "Sincronizar Gmail"}
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Correo actualizado</DialogTitle>
+            <DialogTitle>{result?.errors ? "Sincronización con incidencias" : "Sincronización finalizada"}</DialogTitle>
             <DialogDescription>
               {result?.created
                 ? `Se encontraron ${result.created} movimiento(s) nuevo(s).`
-                : "Sin nuevos resultados."}
+                : result?.errors ? "No se completó la revisión de todos los correos." : "No hay movimientos nuevos en el período seleccionado."}
             </DialogDescription>
           </DialogHeader>
 
+          <div aria-live="polite" className="space-y-3">
+            {result?.accounts?.map(account => <div key={account.email} className="rounded-xl border p-3 text-sm">
+              <p className="break-all font-medium">{account.email}</p>
+              <p className="mt-1 text-muted-foreground">{account.created} nuevos · {account.skipped} omitidos · {account.errors} incidencias</p>
+              {account.message && <p className="mt-2 text-amber-700 dark:text-amber-400">{account.message}</p>}
+              {account.truncated && <p className="mt-2 text-amber-700 dark:text-amber-400">Se revisaron los 100 correos más recientes de esta cuenta. Reduce el período o revisa los anteriores manualmente.</p>}
+            </div>)}
+            {!!result?.errors && <button type="button" disabled={syncing} className="text-sm font-semibold text-primary underline" onClick={handleSync}>Reintentar sincronización</button>}
+          </div>
           {result && result.transactions.length > 0 && (
             <div className="space-y-2">
               {incomes.length > 0 && (
@@ -139,7 +159,7 @@ export function SyncEmailButton() {
             </div>
           )}
 
-          {result && result.transactions.length === 0 && (
+          {result && result.transactions.length === 0 && result.errors === 0 && (
             <div className="flex flex-col items-center gap-2 py-4 text-center">
               <span className="text-3xl">📭</span>
               <p className="text-sm font-medium text-foreground">

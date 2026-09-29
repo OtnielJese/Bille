@@ -1,7 +1,9 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { isValidMonth, monthFromRange } from "@/lib/month-filter";
+import { monthRange } from "@/lib/finance";
 import { createClient } from "@/lib/supabase/client";
 import type { Category, Transaction } from "@/types";
 import {
@@ -33,7 +35,15 @@ function TransactionsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const monthParam = searchParams.get("month");
+  const selectedMonth = isValidMonth(monthParam) ? monthParam : "";
   const [filters, setFilters] = useState<TransactionFilterState>(DEFAULT_FILTERS);
+  const activeFilters = useMemo(() => {
+    if (!selectedMonth) return filters;
+    const range = monthRange(selectedMonth + "-01");
+    return { ...filters, date_from: range.start, date_to: range.end };
+  }, [filters, selectedMonth]);
+  const requestId = useRef(0);
   const [categories, setCategories] = useState<Category[]>([]);
   const [banks, setBanks] = useState<string[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -50,7 +60,9 @@ function TransactionsContent() {
     if (searchParams.get("new") === "1") {
       setEditing(null);
       setFormOpen(true);
-      router.replace("/transactions");
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("new");
+      router.replace("/transactions?" + params.toString(), { scroll: false });
     }
   }, [searchParams, router]);
 
@@ -60,9 +72,13 @@ function TransactionsContent() {
     if (q) {
       setFilters((prev) => ({ ...prev, search: q }));
       setPage(1);
-      router.replace("/transactions");
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("q");
+      router.replace("/transactions?" + params.toString(), { scroll: false });
     }
   }, [searchParams, router]);
+
+  useEffect(() => { setPage(1); }, [selectedMonth]);
 
   // Cargar categorías y bancos
   useEffect(() => {
@@ -99,44 +115,53 @@ function TransactionsContent() {
   }, []);
 
   const load = useCallback(async () => {
+    const currentRequest = ++requestId.current;
     setLoading(true);
     try {
       const params = new URLSearchParams();
       params.set("page", String(page));
       params.set("limit", "20");
-      if (filters.type) params.set("type", filters.type);
-      if (filters.category_id) params.set("category_id", filters.category_id);
-      if (filters.bank) params.set("bank", filters.bank);
-      if (filters.date_from) params.set("date_from", filters.date_from);
-      if (filters.date_to) params.set("date_to", filters.date_to);
-      if (filters.search) params.set("search", filters.search);
+      if (activeFilters.type) params.set("type", activeFilters.type);
+      if (activeFilters.category_id) params.set("category_id", activeFilters.category_id);
+      if (activeFilters.bank) params.set("bank", activeFilters.bank);
+      if (activeFilters.date_from) params.set("date_from", activeFilters.date_from);
+      if (activeFilters.date_to) params.set("date_to", activeFilters.date_to);
+      if (activeFilters.search) params.set("search", activeFilters.search);
 
       const res = await fetch(`/api/transactions?${params.toString()}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Error al cargar transacciones.");
 
+      if (currentRequest !== requestId.current) return;
       setTransactions(data.transactions ?? []);
       setTotal(data.total ?? 0);
     } catch (error: any) {
-      toast.error(error?.message ?? "No se pudieron cargar las transacciones");
+      if (currentRequest === requestId.current) toast.error(error?.message ?? "No se pudieron cargar las transacciones");
     } finally {
-      setLoading(false);
+      if (currentRequest === requestId.current) setLoading(false);
     }
-  }, [page, filters]);
+  }, [page, activeFilters]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   function handleFiltersChange(next: TransactionFilterState) {
-    setFilters(next);
+    const month = monthFromRange(next.date_from, next.date_to);
+    setFilters({ ...next, date_from: month ? "" : next.date_from, date_to: month ? "" : next.date_to });
     setPage(1);
+    if (month !== selectedMonth) {
+      const params = new URLSearchParams(searchParams.toString());
+      if (month) params.set("month", month); else params.delete("month");
+      router.push("/transactions?" + params.toString(), { scroll: false });
+    }
   }
 
   async function handleDelete(id: string) {
     const res = await fetch(`/api/transactions/${id}`, { method: "DELETE" });
     if (res.ok) {
       toast.success("Transacción eliminada");
+      window.dispatchEvent(new Event("finance-updated"));
       load();
       router.refresh();
     } else {
@@ -161,12 +186,12 @@ function TransactionsContent() {
       const params = new URLSearchParams();
       params.set("page", "1");
       params.set("limit", "1000");
-      if (filters.type) params.set("type", filters.type);
-      if (filters.category_id) params.set("category_id", filters.category_id);
-      if (filters.bank) params.set("bank", filters.bank);
-      if (filters.date_from) params.set("date_from", filters.date_from);
-      if (filters.date_to) params.set("date_to", filters.date_to);
-      if (filters.search) params.set("search", filters.search);
+      if (activeFilters.type) params.set("type", activeFilters.type);
+      if (activeFilters.category_id) params.set("category_id", activeFilters.category_id);
+      if (activeFilters.bank) params.set("bank", activeFilters.bank);
+      if (activeFilters.date_from) params.set("date_from", activeFilters.date_from);
+      if (activeFilters.date_to) params.set("date_to", activeFilters.date_to);
+      if (activeFilters.search) params.set("search", activeFilters.search);
 
       const res = await fetch(`/api/transactions?${params.toString()}`);
       const data = await res.json();
@@ -211,6 +236,7 @@ function TransactionsContent() {
       URL.revokeObjectURL(url);
 
       toast.success("CSV exportado");
+      window.dispatchEvent(new Event("finance-updated"));
     } catch {
       toast.error("No se pudo exportar el CSV");
     } finally {
@@ -223,7 +249,7 @@ function TransactionsContent() {
   return (
     <div className="space-y-6">
       <TransactionFilters
-        filters={filters}
+        filters={activeFilters}
         onChange={handleFiltersChange}
         categories={categories}
         banks={bankList}

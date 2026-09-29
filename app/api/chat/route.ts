@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { createClient, getUserFast } from "@/lib/supabase/server";
-import { sendBudgetAlert } from "@/lib/resend";
-import { formatCurrency, todayLocal, toLocalDateString } from "@/lib/utils";
+import { evaluateAlerts } from "@/lib/alerts";
+import { monthRange, resolveTransactionDate, isValidDate } from "@/lib/finance";
+import { loadFinancialSummary } from "@/lib/financial-summary";
+import { formatCurrency, todayLocal } from "@/lib/utils";
+import { parseChatResponse } from "@/lib/chat-response";
 
-async function streamGemini(
+async function generateGeminiResponse(
   systemPrompt: string,
   message: string,
-  imageBase64: string | null | undefined,
-  onToken: (token: string) => void
+  imageBase64: string | null | undefined
 ): Promise<string> {
   const text =
     message?.trim() ||
@@ -50,7 +52,6 @@ async function streamGemini(
     const delta = chunk.text();
     if (delta) {
       full += delta;
-      onToken(delta);
     }
   }
   return full;
@@ -62,102 +63,6 @@ function parseDataUrl(value: string): { mime: string; data: string } {
     return { mime: match[1], data: match[2] };
   }
   return { mime: "image/jpeg", data: value };
-}
-
-function extractJson(text: string): any | null {
-  const cleaned = text
-    .replace(/```json/gi, "")
-    .replace(/```/g, "")
-    .trim();
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    /* intenta extraer el primer objeto JSON del texto */
-  }
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-  if (start !== -1 && end > start) {
-    try {
-      return JSON.parse(cleaned.slice(start, end + 1));
-    } catch {
-      /* ignore */
-    }
-  }
-  return null;
-}
-
-/**
- * Determina la fecha de una transacción a partir del mensaje del usuario.
- * Gemini suele inventar fechas (ej. 2024-05-20), así que NUNCA confiamos
- * en la fecha que el modelo devuelve; solo en lo que el usuario escribió.
- * Si no hay fecha explícita, se usa hoy.
- */
-function resolveTransactionDate(message: string, localDate?: string | null): string {
-  const m = (message ?? "").toLowerCase().trim();
-  // Usa la fecha local del usuario si viene del cliente; si no, la del servidor.
-  const today =
-    localDate && /^\d{4}-\d{2}-\d{2}$/.test(localDate)
-      ? localDate
-      : todayLocal();
-  if (!m) return today;
-
-  // YYYY-MM-DD o YYYY/MM/DD
-  const iso = m.match(/\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/);
-  if (iso) {
-    const d = new Date(+iso[1], +iso[2] - 1, +iso[3]);
-    if (!Number.isNaN(d.getTime())) return toLocalDateString(d);
-  }
-
-  // DD/MM/YYYY o DD-MM-YYYY
-  const dmy = m.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b/);
-  if (dmy) {
-    const d = new Date(+dmy[3], +dmy[2] - 1, +dmy[1]);
-    if (!Number.isNaN(d.getTime())) return toLocalDateString(d);
-  }
-
-  // hoy
-  if (/\bhoy\b/.test(m)) return today;
-
-  // ayer / anteayer
-  if (/\banteayer\b/.test(m)) {
-    const d = new Date();
-    d.setDate(d.getDate() - 2);
-    return toLocalDateString(d);
-  }
-  if (/\bayer\b/.test(m)) {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    return toLocalDateString(d);
-  }
-
-  return today;
-}
-
-async function getTopCategories(
-  supabase: any,
-  userId: string,
-  start: string,
-  end: string
-) {
-  const { data: txs } = await supabase
-    .from("transactions")
-    .select("amount, category:categories(name, icon)")
-    .eq("user_id", userId)
-    .eq("type", "egreso")
-    .gte("date", start)
-    .lte("date", end);
-
-  const grouped = new Map<string, { name: string; icon: string; amount: number }>();
-  for (const t of txs ?? []) {
-    const name = t.category?.name ?? "Sin categoría";
-    const icon = t.category?.icon ?? "📌";
-    const existing = grouped.get(name);
-    if (existing) existing.amount += Number(t.amount);
-    else grouped.set(name, { name, icon, amount: Number(t.amount) });
-  }
-  return Array.from(grouped.values())
-    .sort((a, b) => b.amount - a.amount)
-    .slice(0, 3);
 }
 
 export async function POST(request: NextRequest) {
@@ -172,55 +77,29 @@ export async function POST(request: NextRequest) {
       localDate: null,
     }));
 
-    if (!message?.trim() && !imageBase64) {
+    if ((message != null && typeof message !== "string") || (imageBase64 != null && typeof imageBase64 !== "string") || (!message?.trim() && !imageBase64)) {
       return NextResponse.json({ error: "Mensaje vacío" }, { status: 400 });
     }
 
-    const now = new Date();
-    const month = now.getMonth() + 1;
-    const year = now.getFullYear();
-    const start = `${year}-${String(month).padStart(2, "0")}-01`;
-    const endDate = new Date(year, month, 0);
-    const end = `${year}-${String(month).padStart(2, "0")}-${String(
-      endDate.getDate()
-    ).padStart(2, "0")}`;
-
-    const [{ data: profile }, { data: budget }, { data: txs }, { data: categories }] =
-      await Promise.all([
-        supabase.from("profiles").select("name, email").eq("id", user.id).single(),
-        supabase
-          .from("budgets")
-          .select("*")
-          .eq("user_id", user.id)
-          .eq("month", month)
-          .eq("year", year)
-          .maybeSingle(),
-        supabase
-          .from("transactions")
-          .select("type, amount")
-          .eq("user_id", user.id)
-          .gte("date", start)
-          .lte("date", end),
-        supabase.from("categories").select("*").eq("user_id", user.id),
-      ]);
-
-    const spent = (txs ?? [])
-      .filter((t) => t.type === "egreso")
-      .reduce((a, t) => a + Number(t.amount), 0);
-    const income = (txs ?? [])
-      .filter((t) => t.type === "ingreso")
-      .reduce((a, t) => a + Number(t.amount), 0);
-
-    const total = Number(budget?.total ?? 0);
-    const remaining = total - spent;
-    const pct = total > 0 ? Math.round((spent / total) * 100) : 0;
+    const { month, year } = monthRange();
+    const [summary, profileResult, categoryResult] = await Promise.all([
+      loadFinancialSummary(supabase, user.id, month, year),
+      supabase.from("profiles").select("name, email").eq("id", user.id).single(),
+      supabase.from("categories").select("*").eq("user_id", user.id),
+    ]);
+    if (profileResult.error || categoryResult.error) throw new Error("No se pudo cargar el contexto financiero.");
+    const profile = profileResult.data, categories = categoryResult.data;
+    const { spent, income, remaining, total_budget: total } = summary;
+    let transactionDate: string;
+    try { transactionDate = resolveTransactionDate(message ?? "", localDate ?? todayLocal()); }
+    catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }); }
 
     const catList = (categories ?? [])
       .map((c: any) => `${c.name}=${c.id}`)
       .join("\n");
 
     const systemPrompt = `Eres Bille, asistente financiero personal de ${profile?.name ?? "usuario"} (solo finanzas personales).
-Presupuesto: ${formatCurrency(total)} · Gastado: ${formatCurrency(spent)} · Ingresos: ${formatCurrency(income)} · Restante: ${formatCurrency(remaining)}.
+Presupuesto: ${formatCurrency(total)} · Gastado: ${formatCurrency(spent)} · Ingresos: ${formatCurrency(income)} · Saldo disponible (ingresos menos gastos del mes): ${formatCurrency(remaining)}.
 
 Categorías (usa el id exacto):
 ${catList}
@@ -238,31 +117,8 @@ Reglas:
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         let fullText = "";
-        let started = false;
-        let isJson = false;
-        let didStream = false;
-
         try {
-          fullText = await streamGemini(
-            systemPrompt,
-            message ?? "",
-            imageBase64,
-            (token) => {
-              // Detecta en el primer token si la respuesta es JSON (transacción)
-              // o texto libre. El texto libre se muestra en vivo (streaming).
-              if (!started) {
-                const first = token.trimStart().charAt(0);
-                if (first) {
-                  started = true;
-                  isJson = first === "{";
-                }
-              }
-              if (!isJson) {
-                didStream = true;
-                controller.enqueue(encoder.encode(token));
-              }
-            }
-          );
+          fullText = await generateGeminiResponse(systemPrompt, message ?? "", imageBase64);
         } catch (err: any) {
           const msg = String(
             err?.message ?? "Ocurrió un error al procesar tu solicitud. Inténtalo de nuevo."
@@ -272,16 +128,16 @@ Reglas:
           return;
         }
 
-        const json = extractJson(fullText);
+        const parsed = parseChatResponse(fullText);
+        if (parsed.kind === "invalid") {
+          controller.enqueue(encoder.encode("No pude interpretar el movimiento y no lo registré. Indica si es ingreso o gasto, el monto y una breve descripción."));
+          controller.close();
+          return;
+        }
 
-        if (json && json.action === "add_transaction") {
-          const amount = Number(json.amount);
-          if (!amount || amount <= 0 || Number.isNaN(amount)) {
-            controller.enqueue(encoder.encode(fullText));
-            controller.close();
-            return;
-          }
-
+        if (parsed.kind === "transaction") {
+          const json = parsed.transaction;
+          const amount = Math.round(json.amount * 100) / 100;
           const validType = ["ingreso", "egreso", "ahorro"].includes(json.type)
             ? json.type
             : "egreso";
@@ -309,7 +165,7 @@ Reglas:
             "Transferencia",
             "Yape/Plin",
             "Otro",
-          ].includes(json.payment_method)
+          ].includes(json.payment_method ?? "")
             ? json.payment_method
             : "Efectivo";
 
@@ -319,106 +175,40 @@ Reglas:
               user_id: user.id,
               category_id: category?.id ?? null,
               type: validType,
-              amount,
+              amount: Math.round(amount * 100) / 100,
               detail: json.detail ?? "",
               bank: json.bank ?? "",
               payment_method: validPayment,
               owner: json.owner ?? "",
               ai_extracted: true,
-              date: resolveTransactionDate(message ?? "", localDate),
+              date: imageBase64 && !message?.trim() && isValidDate(json.date) ? json.date : transactionDate,
             })
             .select("*, category:categories(*)")
             .single();
 
-          if (error) {
+          if (error || !tx) {
             console.error("Chat: no se pudo registrar la transacción", error);
             controller.enqueue(
               encoder.encode(
-                `⚠️ No se pudo registrar la transacción: ${error.message}`
+                "No se pudo guardar el movimiento. Revisa tus transacciones antes de volver a intentarlo."
               )
             );
             controller.close();
             return;
           }
 
-          // Pre-calcular si corresponde enviar alerta de presupuesto
-          let willAlert = false;
-          let alertTo = "";
-          let newRemaining = 0;
-          let pctLeft = 0;
-          if (total > 0 && budget) {
-            newRemaining = total - (spent + amount);
-            pctLeft = Math.round((newRemaining / total) * 100);
-            const threshold = budget.alert_threshold_pct ?? 20;
-            alertTo = budget.alert_email ?? profile?.email ?? "";
-            willAlert = !!alertTo && pctLeft < threshold;
-          }
+          const typeLabel = tx.type === "ingreso" ? "Ingreso" : tx.type === "ahorro" ? "Ahorro" : "Gasto";
+          const confirmMessage = `✓ ${typeLabel} registrado: ${formatCurrency(Number(tx.amount))} — ${tx.detail || category?.name || "Sin descripción"}`;
 
-          const confirmMessage =
-            json.message ??
-            `✓ Registré ${formatCurrency(amount)} en ${
-              category?.name ?? "sin categoría"
-            } — ${json.detail ?? ""}`;
-
-          controller.enqueue(
-            encoder.encode(
-              confirmMessage +
-                (willAlert
-                  ? " 📧 Te enviaré una alerta de presupuesto por correo."
-                  : "")
-            )
-          );
-          controller.enqueue(
-            encoder.encode(
-              `\n\n__FINAL_JSON__${JSON.stringify({ transaction: tx })}`
-            )
-          );
-
-          // Cerrar el stream ANTES de enviar la alerta: la respuesta al
-          // usuario no debe esperar al email (que puede fallar o tardar).
+          controller.enqueue(encoder.encode(confirmMessage));
+          if (validType === "egreso") await evaluateAlerts(supabase, user.id, [tx.date]);
+          controller.enqueue(encoder.encode(`\n\n__FINAL_JSON__${JSON.stringify({ transaction: tx })}`));
           controller.close();
-
-          // El envío de alerta se hace en segundo plano y NUNCA bloquea
-          // la respuesta ya emitida.
-          if (willAlert) {
-            try {
-              await sendBudgetAlert(alertTo, {
-                name: profile?.name ?? "",
-                subject: "⚠️ Tu presupuesto está bajo — Bille",
-                budgetRemaining: newRemaining,
-                budgetPctLeft: pctLeft,
-                topCategories: await getTopCategories(supabase, user.id, start, end),
-              });
-              await supabase.from("alert_history").insert({
-                user_id: user.id,
-                type: "budget_low",
-                subject: "Presupuesto bajo",
-                sent_to: alertTo,
-                budget_remaining: newRemaining,
-                budget_pct_left: pctLeft,
-                success: true,
-              });
-            } catch {
-              await supabase.from("alert_history").insert({
-                user_id: user.id,
-                type: "budget_low",
-                subject: "Presupuesto bajo",
-                sent_to: alertTo,
-                budget_remaining: newRemaining,
-                budget_pct_left: pctLeft,
-                success: false,
-              });
-            }
-          }
 
           return;
         }
 
-        // Si no fue JSON, ya se transmitió en vivo (streaming).
-        // Solo enviamos el texto completo si nunca se transmitió nada.
-        if (!didStream && fullText.trim()) {
-          controller.enqueue(encoder.encode(fullText.trim()));
-        }
+        controller.enqueue(encoder.encode(parsed.text));
         controller.close();
       },
     });

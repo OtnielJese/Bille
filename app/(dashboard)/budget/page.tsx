@@ -36,6 +36,7 @@ interface Summary {
   income: number;
   savings: number;
   remaining: number;
+  total_budget: number;
   pct_used: number;
 }
 
@@ -75,6 +76,7 @@ export default function BudgetPage() {
         fetch("/api/budget?history=true"),
         fetch("/api/category-budgets"),
       ]);
+      if (!sumRes.ok || !histRes.ok || !catRes.ok) throw new Error("No se pudo cargar el presupuesto");
       const sum = await sumRes.json();
       const hist = await histRes.json();
       const cat = await catRes.json();
@@ -129,6 +131,7 @@ export default function BudgetPage() {
       if (!res.ok) throw new Error(data.error ?? "No se pudo guardar");
 
       toast.success("Presupuesto guardado");
+      window.dispatchEvent(new Event("finance-updated"));
       load();
     } catch (err: any) {
       toast.error(err?.message ?? "No se pudo guardar el presupuesto");
@@ -147,6 +150,8 @@ export default function BudgetPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "No se pudo guardar");
       toast.success("Presupuesto de categoría guardado");
+      load();
+      window.dispatchEvent(new Event("finance-updated"));
     } catch (e: any) {
       toast.error(e?.message ?? "No se pudo guardar");
     }
@@ -195,7 +200,7 @@ export default function BudgetPage() {
             <div className="text-right">
               <p className="text-sm text-muted-foreground">Presupuesto</p>
               <p className="text-xl font-semibold">
-                {formatCurrency(Number(summary?.budget?.total ?? 0))}
+                {summary?.total_budget ? formatCurrency(summary.total_budget) : "Sin configurar"}
               </p>
             </div>
           </div>
@@ -206,7 +211,7 @@ export default function BudgetPage() {
             />
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
-            {pctUsed}% del presupuesto utilizado
+            {summary?.total_budget ? `${pctUsed}% del presupuesto utilizado` : "Configura un presupuesto mensual o distribúyelo por categorías."}
           </p>
 
           <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -218,7 +223,7 @@ export default function BudgetPage() {
             />
             <MiniCard
               icon={Wallet}
-              label="Restante"
+              label="Saldo del mes"
               value={formatCurrency(remaining)}
               color={surplus ? "#10b981" : "#ef4444"}
             />
